@@ -1,0 +1,47 @@
+# =============================================
+#   STICO - Locator Bar Plugin pour 1.21
+# =============================================
+
+# Activer/désactiver le plugin globalement
+enabled: true
+
+# Intervalle de mise à jour en ticks (20 ticks = 1 seconde)
+# Recommandé : 4 (0.2s) pour une fluidité proche de 1.21.6
+update-interval: 4
+
+# Distance maximale (en blocs) pour voir un joueur sur la barre
+# 0 = illimité (tous les joueurs du monde)
+max-distance: 0
+
+# Afficher les joueurs d'autres mondes dans la barre ?
+cross-world: false
+
+# Afficher une flèche ↑ ou ↓ si le joueur est significativement
+# au-dessus ou en dessous (en blocs de différence Y)
+vertical-arrow-threshold: 10
+
+# Les joueurs accroupis (sneaking) disparaissent de la barre des autres
+# (comportement identique à la 1.21.6)
+sneak-hides: true
+
+# Les joueurs en mode spectateur n'apparaissent pas
+hide-spectators: true
+
+# Format de la barre XP (affiché quand la barre locator est masquée)
+# Variables : {level}
+xp-format: "{level}"
+
+# Couleurs assignées aux joueurs (rotation automatique si plus de joueurs)
+# Couleurs disponibles : RED, BLUE, GREEN, YELLOW, GOLD, AQUA, LIGHT_PURPLE, WHITE
+player-colors:
+  - RED
+  - BLUE
+  - GREEN
+  - YELLOW
+  - GOLD
+  - AQUA
+  - LIGHT_PURPLE
+  - WHITE
+
+# Message affiché à l'arrivée sur le serveur
+join-message: true

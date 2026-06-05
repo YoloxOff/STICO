@@ -1,0 +1,25 @@
+name: STICO
+version: '${project.version}'
+main: fr.stico.plugin.SticoPlugin
+api-version: '1.21'
+description: Locator Bar pour Minecraft 1.21 - affiche la position des joueurs dans la barre d'XP
+authors: [STICO]
+website: https://github.com/stico
+
+commands:
+  stico:
+    description: Commandes STICO
+    usage: /stico <help|toggle|reload>
+    permission: stico.use
+    aliases: [locator]
+
+permissions:
+  stico.use:
+    description: Permet d'utiliser /stico toggle
+    default: true
+  stico.admin:
+    description: Accès aux commandes admin STICO
+    default: op
+  stico.bypass:
+    description: Le joueur n'apparaît pas sur la barre des autres (comme se baisser en 1.21.6)
+    default: false
