@@ -18,23 +18,10 @@ public class LocatorBarManager {
     private final SticoPlugin plugin;
     private BukkitTask updateTask;
 
-    // Joueurs qui ont désactivé la barre manuellement
     private final Set<UUID> disabledPlayers = new HashSet<>();
-
-    // Stocke le niveau XP réel des joueurs pour le restaurer
     private final Map<UUID, Integer> savedLevels = new HashMap<>();
     private final Map<UUID, Float> savedExp = new HashMap<>();
-
-    // Cooldown XP : masque la barre locator pendant X ticks si XP change
     private final Map<UUID, Integer> xpCooldown = new HashMap<>();
-
-    // ─── Caractères de la barre ───────────────────────────────────────────────
-    // On utilise des caractères Unicode pour dessiner la barre
-    // Chaque "slot" de joueur est représenté par un bloc coloré + symbole directionnel
-    private static final String ARROW_UP   = "▲";
-    private static final String ARROW_DOWN = "▼";
-    private static final String DOT        = "⬤";
-    private static final String SEPARATOR  = " ";
 
     public LocatorBarManager(SticoPlugin plugin) {
         this.plugin = plugin;
@@ -46,186 +33,108 @@ public class LocatorBarManager {
     }
 
     public void stopTask() {
-        if (updateTask != null) {
-            updateTask.cancel();
-        }
+        if (updateTask != null) updateTask.cancel();
     }
 
-    /**
-     * Met à jour la barre XP de tous les joueurs connectés.
-     */
     private void updateAllBars() {
         for (Player player : Bukkit.getOnlinePlayers()) {
             updateBar(player);
         }
-
-        // Décrémenter les cooldowns XP
-        xpCooldown.replaceAll((uuid, ticks) -> ticks - plugin.getConfig().getInt("update-interval", 4));
+        int interval = plugin.getConfig().getInt("update-interval", 4);
+        xpCooldown.replaceAll((uuid, ticks) -> ticks - interval);
         xpCooldown.entrySet().removeIf(e -> e.getValue() <= 0);
     }
 
-    /**
-     * Met à jour la barre d'un joueur spécifique.
-     */
     public void updateBar(Player player) {
         UUID uuid = player.getUniqueId();
 
-        // Plugin désactivé globalement
-        if (!plugin.getConfig().getBoolean("enabled", true)) {
-            restoreXpBar(player);
-            return;
-        }
+        if (!plugin.getConfig().getBoolean("enabled", true)) { restoreXpBar(player); return; }
+        if (disabledPlayers.contains(uuid)) { restoreXpBar(player); return; }
+        if (xpCooldown.containsKey(uuid)) { restoreXpBar(player); return; }
 
-        // Joueur a désactivé sa barre
-        if (disabledPlayers.contains(uuid)) {
-            restoreXpBar(player);
-            return;
-        }
-
-        // Cooldown XP actif → on laisse la barre XP native s'afficher
-        if (xpCooldown.containsKey(uuid)) {
-            restoreXpBar(player);
-            return;
-        }
-
-        // Récupère les joueurs visibles
         List<Player> targets = getVisiblePlayers(player);
 
-        if (targets.isEmpty()) {
-            // Aucun joueur visible → afficher la barre XP normale
-            restoreXpBar(player);
-            return;
-        }
+        if (targets.isEmpty()) { restoreXpBar(player); return; }
 
-        // Sauvegarde les vraies valeurs XP
+        // Sauvegarde XP réel
         savedLevels.put(uuid, player.getLevel());
         savedExp.put(uuid, player.getExp());
 
-        // Construction de la barre locator
         renderLocatorBar(player, targets);
     }
 
     /**
-     * Construit et affiche la barre locator dans la barre d'XP du joueur.
-     * 
-     * Le principe : on utilise setLevel() pour afficher le niveau XP,
-     * et setExp() (valeur 0.0 à 1.0) pour contrôler la progression visuelle.
-     * 
-     * Pour la "barre" elle-même, on envoie un BossBar ou on exploite
-     * le titre du niveau via sendActionBar (plus propre et non-intrusif).
-     * 
-     * Architecture : 
-     *  - La barre XP verte affiche une progression représentant les joueurs
-     *    (divisée en segments selon le nombre de joueurs)
-     *  - Le niveau XP affiche un résumé textuel via le componant de niveau
-     *  - Un ActionBar au-dessus affiche les icônes colorées des joueurs
-     *    avec les flèches directionnelles (comme la 1.21.6)
+     * Affichage via bossbar textuelle dans l'ActionBar ET level text.
+     *
+     * On utilise le LEVEL TEXT (composant Adventure) pour afficher
+     * les points colorés sous forme de texte Minecraft simple :
+     * chaque joueur = "● " ou "●↑" ou "●↓" en couleur.
+     *
+     * La barre XP verte est mise à 0 (invisible) pour laisser toute
+     * l'attention sur les indicateurs textuels.
      */
     private void renderLocatorBar(Player viewer, List<Player> targets) {
-        int count = targets.size();
         ColorManager colorManager = plugin.getColorManager();
-
-        // ── 1. ActionBar : icônes des joueurs avec couleurs et flèches ──────
-        Component barComponent = buildLocatorComponent(viewer, targets, colorManager);
-        viewer.sendActionBar(barComponent);
-
-        // ── 2. Barre XP : on segmente la barre selon le nombre de joueurs ──
-        // On met le niveau à 0 pour éviter l'affichage du chiffre de niveau
-        // et on utilise la progression pour "dessiner" la présence
-        float progress = Math.min(1.0f, count / 10.0f); // 10 joueurs = barre pleine
-        viewer.setLevel(0);
-        viewer.setExp(progress);
-    }
-
-    /**
-     * Construit le composant visuel de la barre locator.
-     * Format : [⬤↑] [⬤] [⬤↓]  (icône coloré + flèche si décalage vertical)
-     */
-    private Component buildLocatorComponent(Player viewer, List<Player> targets, ColorManager colorManager) {
         int verticalThreshold = plugin.getConfig().getInt("vertical-arrow-threshold", 10);
 
-        Component bar = Component.text("◀ ", NamedTextColor.DARK_GRAY);
+        // ── Construit le composant texte pour l'ActionBar ──────────────────
+        // Format : "< [Nom] [Nom↑] [Nom↓] >"
+        // On utilise uniquement des caractères ASCII-safe + couleurs Minecraft
+        Component bar = Component.text("< ", NamedTextColor.DARK_GRAY);
 
         for (int i = 0; i < targets.size(); i++) {
             Player target = targets.get(i);
             TextColor color = colorManager.getPlayerColor(target);
 
-            // Calcul de la direction verticale
             double yDiff = target.getLocation().getY() - viewer.getLocation().getY();
-            String icon;
+            String suffix = "";
+            if (yDiff > verticalThreshold) suffix = "+";
+            else if (yDiff < -verticalThreshold) suffix = "-";
 
-            if (yDiff > verticalThreshold) {
-                icon = DOT + ARROW_UP;
-            } else if (yDiff < -verticalThreshold) {
-                icon = DOT + ARROW_DOWN;
-            } else {
-                icon = DOT;
-            }
+            // Nom court (max 8 chars) + indicateur vertical
+            String name = target.getName();
+            if (name.length() > 8) name = name.substring(0, 7) + ".";
 
-            // Nom du joueur au survol (hover event)
-            Component playerIcon = Component.text(icon, color)
-                    .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(
-                            Component.text(target.getName(), color)
-                                    .append(Component.newline())
-                                    .append(Component.text("X: " + (int) target.getLocation().getX(), NamedTextColor.GRAY))
-                                    .append(Component.text(" Y: " + (int) target.getLocation().getY(), NamedTextColor.GRAY))
-                                    .append(Component.text(" Z: " + (int) target.getLocation().getZ(), NamedTextColor.GRAY))
-                    ));
-
-            bar = bar.append(playerIcon);
+            Component entry = Component.text(name + suffix, color, TextDecoration.BOLD);
+            bar = bar.append(entry);
 
             if (i < targets.size() - 1) {
-                bar = bar.append(Component.text(SEPARATOR, NamedTextColor.GRAY));
+                bar = bar.append(Component.text("  ", NamedTextColor.DARK_GRAY));
             }
         }
 
-        bar = bar.append(Component.text(" ▶", NamedTextColor.DARK_GRAY));
-        return bar;
+        bar = bar.append(Component.text(" >", NamedTextColor.DARK_GRAY));
+
+        // ── Envoie dans l'ActionBar ────────────────────────────────────────
+        viewer.sendActionBar(bar);
+
+        // ── Barre XP : niveau = nb joueurs visibles, barre = vide ─────────
+        viewer.setLevel(targets.size());
+        viewer.setExp(0.0f);
     }
 
-    /**
-     * Retourne la liste des joueurs visibles pour un viewer donné.
-     * Respecte les règles : sneak, spectator, distance, monde, bypass.
-     */
     private List<Player> getVisiblePlayers(Player viewer) {
         List<Player> result = new ArrayList<>();
         boolean sneakHides = plugin.getConfig().getBoolean("sneak-hides", true);
         boolean hideSpectators = plugin.getConfig().getBoolean("hide-spectators", true);
         boolean crossWorld = plugin.getConfig().getBoolean("cross-world", false);
         double maxDistance = plugin.getConfig().getDouble("max-distance", 0);
-
         World viewerWorld = viewer.getWorld();
 
         for (Player target : Bukkit.getOnlinePlayers()) {
             if (target.equals(viewer)) continue;
-
-            // Monde différent
             if (!crossWorld && !target.getWorld().equals(viewerWorld)) continue;
-
-            // Spectateur caché
             if (hideSpectators && target.getGameMode() == GameMode.SPECTATOR) continue;
-
-            // Joueur accroupi → invisible sur la barre
             if (sneakHides && target.isSneaking()) continue;
-
-            // Permission bypass → n'apparaît pas sur la barre des autres
             if (target.hasPermission("stico.bypass")) continue;
-
-            // Distance maximale
             if (maxDistance > 0 && target.getWorld().equals(viewerWorld)) {
-                double dist = viewer.getLocation().distance(target.getLocation());
-                if (dist > maxDistance) continue;
+                if (viewer.getLocation().distance(target.getLocation()) > maxDistance) continue;
             }
-
             result.add(target);
         }
-
         return result;
     }
 
-    /**
-     * Restaure la vraie barre XP d'un joueur.
-     */
     public void restoreXpBar(Player player) {
         UUID uuid = player.getUniqueId();
         if (savedLevels.containsKey(uuid)) {
@@ -236,46 +145,26 @@ public class LocatorBarManager {
         }
     }
 
-    /**
-     * Restaure la barre XP de tous les joueurs (used on disable).
-     */
     public void restoreAllXpBars() {
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            restoreXpBar(player);
-        }
+        for (Player player : Bukkit.getOnlinePlayers()) restoreXpBar(player);
     }
 
-    /**
-     * Déclenche un cooldown XP pour un joueur (masque la barre locator pendant 5s).
-     */
     public void triggerXpCooldown(Player player) {
-        xpCooldown.put(player.getUniqueId(), 100); // 100 ticks = 5 secondes
+        xpCooldown.put(player.getUniqueId(), 100);
         restoreXpBar(player);
     }
 
-    // ── Gestion toggle ────────────────────────────────────────────────────────
-
-    public boolean isDisabled(Player player) {
-        return disabledPlayers.contains(player.getUniqueId());
-    }
+    public boolean isDisabled(Player player) { return disabledPlayers.contains(player.getUniqueId()); }
 
     public void togglePlayer(Player player) {
         UUID uuid = player.getUniqueId();
-        if (disabledPlayers.contains(uuid)) {
-            disabledPlayers.remove(uuid);
-        } else {
-            disabledPlayers.add(uuid);
-            restoreXpBar(player);
-        }
+        if (disabledPlayers.contains(uuid)) { disabledPlayers.remove(uuid); }
+        else { disabledPlayers.add(uuid); restoreXpBar(player); }
     }
 
     public void setEnabled(Player player, boolean enabled) {
-        if (enabled) {
-            disabledPlayers.remove(player.getUniqueId());
-        } else {
-            disabledPlayers.add(player.getUniqueId());
-            restoreXpBar(player);
-        }
+        if (enabled) disabledPlayers.remove(player.getUniqueId());
+        else { disabledPlayers.add(player.getUniqueId()); restoreXpBar(player); }
     }
 
     public void cleanupPlayer(UUID uuid) {
